@@ -1,20 +1,33 @@
 #include <iostream>
 #include <cmath>
-#include <chrono>   // for high-resolution timing
+#include <chrono>
 #include <omp.h>
-#define N 100000000  
+#include <string>
+
+#define N 100000000
+using namespace std;
 
 double f(double x) {
-    return x * x;
+    //return x * x;
+    return exp(-(x*x));
 }
 
-int main() {
+int main(int argc, char* argv[]) {
     double a = 0.0, b = 10.0;
     double h = (b - a) / N;
     double sum = 0.0;
 
-    auto start = std::chrono::high_resolution_clock::now();
-    #pragma omp parallel{
+    omp_set_dynamic(0);        
+    int num_threads = 1;
+    if (argc >= 2) {
+        num_threads = std::stoi(argv[1]);
+    }
+        
+
+    auto start = chrono::high_resolution_clock::now();
+
+    #pragma omp parallel firstprivate(h, a) num_threads(num_threads)
+    {
         double local_sum = 0.0;
 
         #pragma omp for
@@ -25,16 +38,15 @@ int main() {
         }
 
         #pragma omp critical
-        sum+= local_sum;
+        sum += local_sum;
     }
 
+    auto end = chrono::high_resolution_clock::now();
 
-    auto end = std::chrono::high_resolution_clock::now();
+    chrono::duration<double> elapsed = end - start;
 
-    std::chrono::duration<double> elapsed = end - start;
-
-    std::cout << "Integral from " << a << " to " << b << " = " << sum << std::endl;
-    std::cout << "Execution time: " << elapsed.count() << " seconds" << std::endl;
+    cout << "Integral from " << a << " to " << b << " = " << sum << endl;
+    cout << "Execution time: " << elapsed.count() << " seconds" << endl;
 
     return 0;
 }

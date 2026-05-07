@@ -9,7 +9,7 @@
 // number of tasks (pieces of work)
 #define K 100
 
-#define NUM_THREADS 4
+#define NUM_THREADS 1
 
 //integration limits
 double a = 0.0, b = 10.0;
@@ -30,12 +30,20 @@ pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t tmutex = PTHREAD_MUTEX_INITIALIZER;
 
 
+// double f(double x) {
+//     return x * x;
+//     // return exp(-(x*x));
+//     // return cos(x*x);
+// }
 double f(double x) {
-    return x * x;
-    // return exp(-(x*x));
-    // return cos(x*x);
+    
+    int k = (int)(x*10);
+    double res = 0.0;
+    for (int i = 0; i < k; i++) {
+        res += x;
+    }
+    return res;
 }
-
 //thread function
 void* compute(void* arg) {
     int id = *(int*)arg;

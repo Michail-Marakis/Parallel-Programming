@@ -2,35 +2,35 @@
 #include <cmath>
 #include <chrono>
 #include <omp.h>
-
+//iterations
 #define N 100000000
 
+//functions
 double f(double x) {
     return x * x;
 }
 
 // double f(double x) {
-//     int k = (int)(1000 * fabs(sin(x)));  
-//     double function_sum = 0;
-//     for(int i = 0; i < k; i++) {
-//         function_sum += exp(-x * x);
+//     int k = (int)(x * 10);
+//     double total = 0.0;
+//     for (int i = 0; i < k; i++) {
+//         total += x;
 //     }
-//     return function_sum;
+//     return total;
 // }
-
 
 int main() {
     double a = 0.0, b = 10.0;
     double h = (b - a) / N;
     double sum = 0.0;
-
-    omp_set_num_threads(1);
-
+    //number of threads
+    
+    int num_threads = 8;
     auto start = std::chrono::high_resolution_clock::now();
-                                                //eidos,chunk size
-    #pragma omp parallel for reduction(+:sum) schedule(static, 1000)
-    //#pragma omp parallel for reduction(+:sum) schedule(dynamic, 100)
-    //#pragma omp parallel for reduction(+:sum) schedule(guided, 1000)
+                                                //method,chunk size
+    //#pragma omp parallel for reduction(+:sum) schedule(static, 1000)
+    //#pragma omp parallel for reduction(+:sum) schedule(static, 1)
+    #pragma omp parallel for reduction(+:sum) schedule(guided, 1000) num_threads(num_threads)
     for (int i = 0; i < N; i++) {
         double x1 = a + i * h;
         double x2 = a + (i + 1) * h;

@@ -1,25 +1,29 @@
 #include <iostream>
 #include <cmath>
-#include <chrono>   // for high-resolution timing
+#include <chrono>   //for high-resolution timing
 #include <omp.h>
 #include <string>
+
+//iterations
 #define N 100000000  
 
+//function
 double f(double x) {
     return x * x;
 }
 
-int main(int argc, char* argv[]) {
+int main() {
     double a = 0.0, b = 10.0;
     double h = (b - a) / N;
     double sum = 0.0;
+
+    //number of threads
     int num_threads = 1;
-    if (argc >= 2) {
-        num_threads = std::stoi(argv[1]);
-    }
+
     
     auto start = std::chrono::high_resolution_clock::now();
    
+    //implement parallelism with reduction
     #pragma omp parallel for reduction(+:sum) num_threads(num_threads)
     for (int i = 0; i < N; i++) {
         double x1 = a + i * h;

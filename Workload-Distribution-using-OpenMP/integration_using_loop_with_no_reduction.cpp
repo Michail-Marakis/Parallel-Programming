@@ -4,32 +4,32 @@
 #include <omp.h>
 #include <string>
 
+//iterations
 #define N 100000000
 using namespace std;
 
+//function
 double f(double x) {
-    //return x * x;
-    return exp(-(x*x));
+    return x * x;
+
 }
 
-int main(int argc, char* argv[]) {
+int main() {
     double a = 0.0, b = 10.0;
     double h = (b - a) / N;
     double sum = 0.0;
-
-    omp_set_dynamic(0);        
+      
+    //number of threads
     int num_threads = 1;
-    if (argc >= 2) {
-        num_threads = std::stoi(argv[1]);
-    }
-        
 
     auto start = chrono::high_resolution_clock::now();
 
+    //implement paralllelism with no reduction
     #pragma omp parallel firstprivate(h, a) num_threads(num_threads)
     {
         double local_sum = 0.0;
 
+        //for region
         #pragma omp for
         for (int i = 0; i < N; i++) {
             double x1 = a + i * h;
@@ -37,6 +37,7 @@ int main(int argc, char* argv[]) {
             local_sum += (f(x1) + f(x2)) * h / 2.0;
         }
 
+        //critical region
         #pragma omp critical
         sum += local_sum;
     }

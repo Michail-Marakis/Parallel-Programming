@@ -41,25 +41,25 @@ __global__ void integrate(double a, double h, double *partial_sum, int mode) {
 
 // -------------------- MAIN --------------------
 int main() {
-
     double a = 0.0, b = 10.0;
     double h = (b - a) / N;
 
     double *h_partial = new double[N];
     double *d_partial;
-
     cudaMalloc(&d_partial, N * sizeof(double));
-    for (int mode = 0; mode <= 1; mode++) {
-    int threadsPerBlock = 256;
-    int blocks = (N + threadsPerBlock - 1) / threadsPerBlock;
 
-   
+    int threadsPerBlock = 256;
+
+    for (int mode = 0; mode <= 1; mode++) {
+        // Προσαρμογή των blocks ανάλογα με το μοντέλο κατανομής
+        int blocks = (mode == 0) ? ((N + threadsPerBlock - 1) / threadsPerBlock) : 1024;
 
         auto start = std::chrono::high_resolution_clock::now();
 
         integrate<<<blocks, threadsPerBlock>>>(a, h, d_partial, mode);
 
         cudaDeviceSynchronize();
+        auto end = std::chrono::high_resolution_clock::now();
 
         cudaMemcpy(h_partial, d_partial, N * sizeof(double), cudaMemcpyDeviceToHost);
 
@@ -68,17 +68,13 @@ int main() {
             sum += h_partial[i];
         }
 
-        auto end = std::chrono::high_resolution_clock::now();
-
         std::chrono::duration<double> elapsed = end - start;
-
-        std::cout << "\nMODE " << mode << std::endl;
+        std::cout << "\nMODE " << mode << " (Blocks: " << blocks << ")" << std::endl;
         std::cout << "Integral = " << sum << std::endl;
         std::cout << "Time = " << elapsed.count() << " sec" << std::endl;
     }
 
     cudaFree(d_partial);
     delete[] h_partial;
-
     return 0;
 }

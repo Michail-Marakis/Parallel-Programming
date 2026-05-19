@@ -60,7 +60,7 @@ int main() {
         );
 
         cudaDeviceSynchronize();
-
+        auto end = std::chrono::high_resolution_clock::now();
         cudaMemcpy(h_partial, d_partial, N * sizeof(double), cudaMemcpyDeviceToHost);
 
         double sum = 0.0;
@@ -68,7 +68,7 @@ int main() {
             sum += h_partial[i];
         }
 
-        auto end = std::chrono::high_resolution_clock::now();
+        
 
         std::chrono::duration<double> elapsed = end - start;
 

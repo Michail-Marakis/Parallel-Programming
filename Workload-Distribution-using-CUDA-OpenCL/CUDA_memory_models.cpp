@@ -102,12 +102,12 @@ int main() {
     kernel_registers<<<blocks, threadsPerBlock>>>(a, h, d_out_N);
     cudaDeviceSynchronize();
 
-    
+    auto end = std::chrono::high_resolution_clock::now();
     cudaMemcpy(h_out_N, d_out_N, N * sizeof(double), cudaMemcpyDeviceToHost);
     
     double sum_reg = 0.0;
     for (int i = 0; i < N; i++) sum_reg += h_out_N[i];
-    auto end = std::chrono::high_resolution_clock::now();
+    
     std::chrono::duration<double> elapsed_reg = end - start;
     std::cout << "1. REGISTER CASE    -> Integral = " << sum_reg << " | Time = " << elapsed_reg.count() << " sec" << std::endl;
 
@@ -116,12 +116,13 @@ int main() {
     kernel_global<<<blocks, threadsPerBlock>>>(a, h, d_out_N);
     cudaDeviceSynchronize();
     
-    
+    end = std::chrono::high_resolution_clock::now();
+
     cudaMemcpy(h_out_N, d_out_N, N * sizeof(double), cudaMemcpyDeviceToHost);
     
     double sum_glob = 0.0;
     for (int i = 0; i < N; i++) sum_glob += h_out_N[i];
-    end = std::chrono::high_resolution_clock::now();
+    
     std::chrono::duration<double> elapsed_glob = end - start;
     std::cout << "2. GLOBAL CASE      -> Integral = " << sum_glob << " | Time = " << elapsed_glob.count() << " sec" << std::endl;
 
@@ -141,12 +142,12 @@ int main() {
     kernel_shared<<<blocks, threadsPerBlock>>>(a, h, d_out_blocks, N);
     cudaDeviceSynchronize();
   
-
+    end = std::chrono::high_resolution_clock::now();
     cudaMemcpy(h_out_blocks, d_out_blocks, blocks * sizeof(double), cudaMemcpyDeviceToHost);
 
     double sum_shared = 0.0;
     for (int i = 0; i < blocks; i++) sum_shared += h_out_blocks[i];
-    end = std::chrono::high_resolution_clock::now();
+    
     std::chrono::duration<double> elapsed_shared = end - start;
     std::cout << "3. SHARED (REDUCE)  -> Integral = " << sum_shared << " | Time = " << elapsed_shared.count() << " sec" << std::endl;
 

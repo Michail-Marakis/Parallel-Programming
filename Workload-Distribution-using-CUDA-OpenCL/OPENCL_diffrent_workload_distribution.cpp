@@ -1,134 +1,194 @@
 #include <iostream>
 #include <cmath>
 #include <chrono>
-#include <vector>
 #include <CL/cl.h>
 
-#define N 100000
+#define N 100000000
 
-// -------------------- OPENCL KERNEL SOURCE CODE --------------------
-// Ο kernel ορίζεται ως string διότι το OpenCL τον κάνει compile στο runtime
 const char* kernelSource = R"(
 double f(double x) {
     return x * x;
 }
 
-__kernel void integrate(double a, double h, __global double* partial_sum, int mode) {
-    //Αντίστοιχο του CUDA: blockIdx.x * blockDim.x + threadIdx.x
-    int tid = get_global_id(0); 
-    
-    //Αντίστοιχο του CUDA: blockDim.x * gridDim.x
-    int stride = get_global_size(0); 
+__kernel void integrate_reduce(double a, double h,
+                               __global double* output,
+                               int N,
+                               int mode) {
 
-    // -------- MODE 0: 1 element / thread ----------------
+    int tid = get_global_id(0);
+    int local_id = get_local_id(0);
+    int local_size = get_local_size(0);
+    int stride = get_global_size(0);
+
+    __local double cache[256];
+
+    double val = 0.0;
+
+    // -------- MODE 0: 1 element / thread --------
     if (mode == 0) {
-        if (tid < 100000) { 
+        if (tid < N) {
             double x1 = a + tid * h;
             double x2 = a + (tid + 1) * h;
-            partial_sum[tid] = (f(x1) + f(x2)) * h / 2.0;
+            val = (f(x1) + f(x2)) * h / 2.0;
         }
     }
-    // ------------ MODE 1: many elements / thread ----------------
+    // -------- MODE 1: many elements / thread --------
     else {
-        for (int i = tid; i < 100000; i += stride) {
+        for (int i = tid; i < N; i += stride) {
             double x1 = a + i * h;
             double x2 = a + (i + 1) * h;
-            partial_sum[i] = (f(x1) + f(x2)) * h / 2.0;
+            val += (f(x1) + f(x2)) * h / 2.0;
         }
+    }
+
+    cache[local_id] = val;
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    // -------- PARALLEL REDUCTION --------
+    for (int s = local_size / 2; s > 0; s /= 2) {
+        if (local_id < s) {
+            cache[local_id] += cache[local_id + s];
+        }
+        barrier(CLK_LOCAL_MEM_FENCE);
+    }
+
+    if (local_id == 0) {
+        output[get_group_id(0)] = cache[0];
+    }
+}
+
+__kernel void reduce(__global double* input,
+                     __global double* output,
+                     int N) {
+
+    int tid = get_global_id(0);
+    int local_id = get_local_id(0);
+    int local_size = get_local_size(0);
+
+    __local double cache[256];
+
+    double val = 0.0;
+    if (tid < N) {
+        val = input[tid];
+    }
+
+    cache[local_id] = val;
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    for (int s = local_size / 2; s > 0; s /= 2) {
+        if (local_id < s) {
+            cache[local_id] += cache[local_id + s];
+        }
+        barrier(CLK_LOCAL_MEM_FENCE);
+    }
+
+    if (local_id == 0) {
+        output[get_group_id(0)] = cache[0];
     }
 }
 )";
 
 int main() {
+
     double a = 0.0, b = 10.0;
     double h = (b - a) / N;
 
-    // ------------------------------------------------------------------
-    // INITIALIZE OPENCL ENVIRONMENT
-    // ------------------------------------------------------------------
-    cl_platform_id platform_id;
-    cl_device_id device_id;
-    cl_uint num_devices, num_platforms;
+    cl_platform_id platform;
+    cl_device_id device;
+    cl_uint num;
 
-    // Πλατφόρμα & Συσκευή (Επιλογή GPU βάσει των slides)
-    clGetPlatformIDs(1, &platform_id, &num_platforms);
-    clGetDeviceIDs(platform_id, CL_DEVICE_TYPE_GPU, 1, &device_id, &num_devices);
+    clGetPlatformIDs(1, &platform, &num);
+    clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, 1, &device, &num);
 
-    // Δημιουργία Context και Command Queue
-    cl_context context = clCreateContext(NULL, 1, &device_id, NULL, NULL, NULL);
-    cl_command_queue queue = clCreateCommandQueue(context, device_id, 0, NULL);
+    cl_context context = clCreateContext(NULL, 1, &device, NULL, NULL, NULL);
+    cl_command_queue queue = clCreateCommandQueue(context, device, 0, NULL);
 
-    // Δημιουργία και Compile του Program από το String
     cl_program program = clCreateProgramWithSource(context, 1, &kernelSource, NULL, NULL);
-    clBuildProgram(program, 1, &device_id, NULL, NULL, NULL);
+    clBuildProgram(program, 1, &device, NULL, NULL, NULL);
 
-    // Δημιουργία του Kernel αντικειμένου
-    cl_kernel kernel = clCreateKernel(program, "integrate", NULL);
+    cl_kernel k_integrate = clCreateKernel(program, "integrate_reduce", NULL);
+    cl_kernel k_reduce = clCreateKernel(program, "reduce", NULL);
 
-    // Δέσμευση Μνήμης στη GPU (Device Buffer)
-    cl_mem d_partial = clCreateBuffer(context, CL_MEM_WRITE_ONLY, N * sizeof(double), NULL, NULL);
-    
-    // Μνήμη Host (CPU)
-    double* h_partial = new double[N];
+    size_t localWorkSize = 256;
 
-    // Ρύθμιση Work-group Sizes (Αντίστοιχο των threadsPerBlock)
-    size_t localWorkSize = 256; // Block Size
-
-    // ------------------------------------------------------------------
-    // EXECUTION LOOP FOR MODES
-    // ------------------------------------------------------------------
     for (int mode = 0; mode <= 1; mode++) {
-        
-        size_t globalWorkSize; // Συνολικά Work-items (Grid Size)
+
+        size_t globalWorkSize;
+
         if (mode == 0) {
-            // mode = 0: Στρογγυλοποίηση στο κοντινότερο πολλαπλάσιο του 256
             globalWorkSize = ((N + localWorkSize - 1) / localWorkSize) * localWorkSize;
         } else {
-            // mode = 1: Σταθερό πλήθος από 1024 blocks * 256 threads = 262144 work-items
             globalWorkSize = 1024 * localWorkSize;
         }
 
-        // Ορισμός των ορισμάτων του Kernel
-        clSetKernelArg(kernel, 0, sizeof(double), &a);
-        clSetKernelArg(kernel, 1, sizeof(double), &h);
-        clSetKernelArg(kernel, 2, sizeof(cl_mem), &d_partial);
-        clSetKernelArg(kernel, 3, sizeof(int), &mode);
+        size_t firstGroups = globalWorkSize / localWorkSize;
 
-        // --- ΕΝΑΡΞΗ ΧΡΟΝΟΜΕΤΡΗΣΗΣ ---
+        cl_mem d_output = clCreateBuffer(context, CL_MEM_READ_WRITE,
+                                         firstGroups * sizeof(double), NULL, NULL);
+
+        // -------- FIRST PASS --------
+        clSetKernelArg(k_integrate, 0, sizeof(double), &a);
+        clSetKernelArg(k_integrate, 1, sizeof(double), &h);
+        clSetKernelArg(k_integrate, 2, sizeof(cl_mem), &d_output);
+        int N_val = N;
+        clSetKernelArg(k_integrate, 3, sizeof(int), &N_val);
+        clSetKernelArg(k_integrate, 4, sizeof(int), &mode);
+
         auto start = std::chrono::high_resolution_clock::now();
 
-        // Εκκίνηση του Kernel (NDRange)
-        clEnqueueNDRangeKernel(queue, kernel, 1, NULL, &globalWorkSize, &localWorkSize, 0, NULL, NULL);
+        clEnqueueNDRangeKernel(queue, k_integrate, 1, NULL,
+                               &globalWorkSize, &localWorkSize, 0, NULL, NULL);
 
-        // Σύγχρονη αναμονή για την ολοκλήρωση της GPU (Αντίστοιχο του cudaDeviceSynchronize)
         clFinish(queue);
 
-        // --- ΛΗΞΗ ΧΡΟΝΟΜΕΤΡΗΣΗΣ (Σωστό σημείο, πάνω από το Copy) ---
-        auto end = std::chrono::high_resolution_clock::now();
+        // -------- MULTI PASS REDUCTION --------
+        size_t currentSize = firstGroups;
+        cl_mem d_in = d_output;
+        cl_mem d_out;
 
-        // Μεταφορά δεδομένων στη CPU (Αντίστοιχο του cudaMemcpy)
-        clEnqueueReadBuffer(queue, d_partial, CL_TRUE, 0, N * sizeof(double), h_partial, 0, NULL, NULL);
+        while (currentSize > 1) {
 
-        // Σειριακό Άθροισμα στη CPU
-        double sum = 0.0;
-        for (int i = 0; i < N; i++) {
-            sum += h_partial[i];
+            size_t newGlobal = ((currentSize + localWorkSize - 1) / localWorkSize) * localWorkSize;
+            size_t numGroups = newGlobal / localWorkSize;
+
+            d_out = clCreateBuffer(context, CL_MEM_READ_WRITE,
+                                   numGroups * sizeof(double), NULL, NULL);
+
+            clSetKernelArg(k_reduce, 0, sizeof(cl_mem), &d_in);
+            clSetKernelArg(k_reduce, 1, sizeof(cl_mem), &d_out);
+            clSetKernelArg(k_reduce, 2, sizeof(int), &currentSize);
+
+            clEnqueueNDRangeKernel(queue, k_reduce, 1, NULL,
+                                   &newGlobal, &localWorkSize, 0, NULL, NULL);
+
+            clFinish(queue);
+
+            clReleaseMemObject(d_in);
+            d_in = d_out;
+            currentSize = numGroups;
         }
 
+        auto end = std::chrono::high_resolution_clock::now();
+
+        double result;
+        clEnqueueReadBuffer(queue, d_in, CL_TRUE, 0,
+                            sizeof(double), &result, 0, NULL, NULL);
+
         std::chrono::duration<double> elapsed = end - start;
-        std::cout << "\nOPENCL MODE " << mode << " (Global Size: " << globalWorkSize << ")" << std::endl;
-        std::cout << "  Integral = " << sum << std::endl;
-        std::cout << "  GPU Time = " << elapsed.count() << " sec" << std::endl;
-        std::cout << "-----------------------------------------------" << std::endl;
+
+        std::cout << "\nMODE " << mode << std::endl;
+        std::cout << "Integral = " << result << std::endl;
+        std::cout << "GPU Time = " << elapsed.count() << " sec" << std::endl;
+        std::cout << "----------------------------------" << std::endl;
+
+        clReleaseMemObject(d_in);
     }
 
-    // Καθαρισμός Μνήμης OpenCL (Αντίστοιχο των cudaFree)
-    clReleaseMemObject(d_partial);
-    clReleaseKernel(kernel);
+    clReleaseKernel(k_integrate);
+    clReleaseKernel(k_reduce);
     clReleaseProgram(program);
     clReleaseCommandQueue(queue);
     clReleaseContext(context);
 
-    delete[] h_partial;
     return 0;
 }

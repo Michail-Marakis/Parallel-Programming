@@ -9,21 +9,31 @@ __device__ double f(double x) {
     return x * x;
 }
 
-// ---------------- KERNEL WITHOUT / WITH BARRIER ----------------
-__global__ void integrate_sync(double a, double h, double *partial_sum, int use_barrier) {
-
-    __shared__ double cache[256]; // for 256 threads per block
+// =======================================================
+// STEP 1: compute partial values (same for both cases)
+// =======================================================
+__global__ void compute_kernel(double a, double h, double *out) {
 
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    int local = threadIdx.x;
-
-    double val = 0.0;
 
     if (tid < N) {
         double x1 = a + tid * h;
         double x2 = a + (tid + 1) * h;
-        val = (f(x1) + f(x2)) * h / 2.0;
+        out[tid] = (f(x1) + f(x2)) * h / 2.0;
     }
+}
+
+// =======================================================
+// STEP 2: REDUCTION WITH / WITHOUT BARRIER
+// =======================================================
+__global__ void reduce_kernel(double *input, double *output, int n, int use_barrier) {
+
+    __shared__ double cache[256];
+
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int local = threadIdx.x;
+
+    double val = (tid < n) ? input[tid] : 0.0;
 
     cache[local] = val;
 
@@ -31,53 +41,85 @@ __global__ void integrate_sync(double a, double h, double *partial_sum, int use_
         __syncthreads();
     }
 
-    // simple write-back
-    if (tid < N) {
-        partial_sum[tid] = cache[local];
+    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+
+        if (local < s) {
+            cache[local] += cache[local + s];
+        }
+
+        if (use_barrier) {
+            __syncthreads();
+        }
+    }
+
+    if (local == 0) {
+        output[blockIdx.x] = cache[0];
     }
 }
 
-// ---------------- MAIN ----------------
+// =======================================================
+// MAIN
+// =======================================================
 int main() {
 
     double a = 0.0, b = 10.0;
     double h = (b - a) / N;
 
-    double *h_partial = new double[N];
-    double *d_partial;
+    int threads = 256;
+    int blocks = (N + threads - 1) / threads;
 
-    cudaMalloc(&d_partial, N * sizeof(double));
+    double *d_in, *d_out;
 
-    int threadsPerBlock = 256;
-    int blocks = (N + threadsPerBlock - 1) / threadsPerBlock;
+    cudaMalloc(&d_in, N * sizeof(double));
+    cudaMalloc(&d_out, blocks * sizeof(double));
+
+    double *h_out = new double[blocks];
+
+    std::cout << "\n--- CUDA BARRIER vs NO BARRIER (FULL GPU REDUCTION) ---\n";
 
     for (int use_barrier = 0; use_barrier <= 1; use_barrier++) {
 
         auto start = std::chrono::high_resolution_clock::now();
 
-        integrate_sync<<<blocks, threadsPerBlock>>>(
-            a, h, d_partial, use_barrier
-        );
-
+        // STEP 1: compute
+        compute_kernel<<<blocks, threads>>>(a, h, d_in);
         cudaDeviceSynchronize();
-        auto end = std::chrono::high_resolution_clock::now();
-        cudaMemcpy(h_partial, d_partial, N * sizeof(double), cudaMemcpyDeviceToHost);
 
-        double sum = 0.0;
-        for (int i = 0; i < N; i++) {
-            sum += h_partial[i];
+        // STEP 2: reduce (FULL GPU)
+        int n = N;
+        double *in = d_in;
+        double *out = d_out;
+
+        while (n > 1) {
+
+            int b = (n + threads - 1) / threads;
+
+            reduce_kernel<<<b, threads>>>(in, out, n, use_barrier);
+            cudaDeviceSynchronize();
+
+            n = b;
+
+            // swap buffers
+            double *tmp = in;
+            in = out;
+            out = tmp;
         }
 
-        
+        double result;
+        cudaMemcpy(&result, in, sizeof(double), cudaMemcpyDeviceToHost);
 
-        std::chrono::duration<double> elapsed = end - start;
+        auto end = std::chrono::high_resolution_clock::now();
 
         std::cout << "\nBARRIER = " << use_barrier << std::endl;
-        std::cout << "Time = " << elapsed.count() << " sec" << std::endl;
+        std::cout << "Result  = " << result << std::endl;
+        std::cout << "Time    = "
+                  << std::chrono::duration<double>(end - start).count()
+                  << " sec" << std::endl;
     }
 
-    cudaFree(d_partial);
-    delete[] h_partial;
+    cudaFree(d_in);
+    cudaFree(d_out);
+    delete[] h_out;
 
     return 0;
 }

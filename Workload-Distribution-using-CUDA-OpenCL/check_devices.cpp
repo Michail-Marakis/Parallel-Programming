@@ -1,142 +1,236 @@
-#include <iostream>
-#include <cmath>
-#include <chrono>
-#include <vector>
+// #include <iostream>
+// #include <vector>
+// #include <CL/cl.h>
+
+// int main() {
+//     cl_uint num_platforms;
+//     cl_int err;
+
+//     // 1. Παίρνουμε το πλήθος των διαθέσιμων OpenCL πλατφορμών
+//     err = clGetPlatformIDs(0, NULL, &num_platforms);
+//     if (err != CL_SUCCESS || num_platforms == 0) {
+//         std::cout << "No OpenCL platforms found! Make sure drivers are installed." << std::endl;
+//         return 1;
+//     }
+
+//     std::vector<cl_platform_id> platforms(num_platforms);
+//     clGetPlatformIDs(num_platforms, platforms.data(), NULL);
+
+//     std::cout << "===============================================" << std::endl;
+//     std::cout << "    SYSTEM HARDWARE DETECTION (OpenCL API)     " << std::endl;
+//     std::cout << "===============================================" << std::endl;
+//     std::cout << "Total OpenCL Platforms Found: " << num_platforms << "\n" << std::endl;
+
+//     // 2. Σκανάρουμε κάθε πλατφόρμα για να βρούμε CPU και GPU συσκευές
+//     for (cl_uint i = 0; i < num_platforms; ++i) {
+//         char platform_name[128];
+//         char platform_vendor[128];
+//         clGetPlatformInfo(platforms[i], CL_PLATFORM_NAME, sizeof(platform_name), platform_name, NULL);
+//         clGetPlatformInfo(platforms[i], CL_PLATFORM_VENDOR, sizeof(platform_vendor), platform_vendor, NULL);
+        
+//         std::cout << "Platform [" << i << "]: " << platform_name << " (" << platform_vendor << ")" << std::endl;
+
+//         cl_uint num_devices;
+//         // Ψάχνουμε για οποιοδήποτε τύπο συσκευής (CPU, GPU, κτλ) στη συγκεκριμένη πλατφόρμα
+//         err = clGetDeviceIDs(platforms[i], CL_DEVICE_TYPE_ALL, 0, NULL, &num_devices);
+//         if (err != CL_SUCCESS || num_devices == 0) {
+//             std::cout << "  -> No hardware devices detected on this platform." << std::endl;
+//             std::cout << "-----------------------------------------------" << std::endl;
+//             continue;
+//         }
+
+//         std::vector<cl_device_id> devices(num_devices);
+//         clGetDeviceIDs(platforms[i], CL_DEVICE_TYPE_ALL, num_devices, devices.data(), NULL);
+
+//         // Εκτύπωση των στοιχείων της κάθε συσκευής
+//         for (cl_uint j = 0; j < num_devices; ++j) {
+//             char device_name[128];
+//             cl_device_type device_type;
+
+//             clGetDeviceInfo(devices[j], CL_DEVICE_NAME, sizeof(device_name), device_name, NULL);
+//             clGetDeviceInfo(devices[j], CL_DEVICE_TYPE, sizeof(device_type), &device_type, NULL);
+
+//             std::cout << "  -> Device [" << j << "]: " << device_name;
+            
+//             // Έλεγχος του τύπου της συσκευής (Hardware Classification)
+//             if (device_type & CL_DEVICE_TYPE_CPU) {
+//                 std::cout << " [⚙️ TYPE: CPU]" << std::endl;
+//             } else if (device_type & CL_DEVICE_TYPE_GPU) {
+//                 std::cout << " [🎮 TYPE: GPU]" << std::endl;
+//             } else {
+//                 std::cout << " [❓ TYPE: OTHER/ACCELERATOR]" << std::endl;
+//             }
+//         }
+//         std::cout << "-----------------------------------------------" << std::endl;
+//     }
+
+//     return 0;
+// }
+
 #include <CL/cl.h>
+#include <stdio.h>
+#include <stdlib.h>
 
-#define N 100000
+#define CHECK(err, msg) do { \
+    if ((err) != CL_SUCCESS) { \
+        printf("Error %d: %s\n", (err), (msg)); \
+        exit(1); \
+    } \
+} while(0)
 
-// -------------------- OPENCL KERNEL SOURCE CODE --------------------
-const char* kernelSource = R"(
-double f(double x) {
-    return x * x;
-}
-
-__kernel void integrate(double a, double h, __global double* partial_sum, int mode) {
-    int tid = get_global_id(0); 
-    int stride = get_global_size(0); 
-
-    // -------- MODE 0: 1 element / thread ----------------
-    if (mode == 0) {
-        if (tid < 100000) { 
-            double x1 = a + tid * h;
-            double x2 = a + (tid + 1) * h;
-            partial_sum[tid] = (f(x1) + f(x2)) * h / 2.0;
-        }
-    }
-    // ------------ MODE 1: many elements / thread ----------------
-    else {
-        for (int i = tid; i < 100000; i += stride) {
-            double x1 = a + i * h;
-            double x2 = a + (i + 1) * h;
-            partial_sum[i] = (f(x1) + f(x2)) * h / 2.0;
-        }
-    }
-}
-)";
-
-int main() {
-    double a = 0.0, b = 10.0;
-    double h = (b - a) / N;
-
-    // ------------------------------------------------------------------
-    // INITIALIZE OPENCL ENVIRONMENT FOR CPU
-    // ------------------------------------------------------------------
-    cl_uint num_platforms;
-    clGetPlatformIDs(0, NULL, &num_platforms);
-    std::vector<cl_platform_id> platforms(num_platforms);
-    clGetPlatformIDs(num_platforms, platforms.data(), NULL);
-
-    cl_device_id device_id = NULL;
-    cl_uint num_devices = 0;
+int main()
+{
     cl_int err;
 
-    // Σκανάρισμα όλων των πλατφορμών για εύρεση CPU
-    for (cl_uint i = 0; i < num_platforms; i++) {
-        err = clGetDeviceIDs(platforms[i], CL_DEVICE_TYPE_CPU, 1, &device_id, &num_devices);
-        if (err == CL_SUCCESS && num_devices > 0) {
-            char platform_name[128];
-            clGetPlatformInfo(platforms[i], CL_PLATFORM_NAME, sizeof(platform_name), platform_name, NULL);
-            std::cout << "[OpenCL] Using CPU via platform: " << platform_name << std::endl;
-            break;
-        }
-    }
+    // -------------------------
+    // Get platforms
+    // -------------------------
+    cl_uint numPlatforms;
+    CHECK(clGetPlatformIDs(0, NULL, &numPlatforms),
+          "get platform count");
 
-    // Fallback: Αν δεν βρεθεί CPU runtime driver, αναγκαστική χρήση της GPU
-    if (num_devices == 0) {
-        std::cout << "[Warning] OpenCL CPU Device not found (missing drivers). Falling back to GPU..." << std::endl;
-        clGetPlatformIDs(1, &platforms[0], NULL);
-        clGetDeviceIDs(platforms[0], CL_DEVICE_TYPE_GPU, 1, &device_id, &num_devices);
-    }
+    cl_platform_id *platforms =
+        (cl_platform_id*)malloc(numPlatforms * sizeof(cl_platform_id));
 
-    // Εκτύπωση του ονόματος της συσκευής που επιλέχθηκε τελικά
-    char device_name[128];
-    clGetDeviceInfo(device_id, CL_DEVICE_NAME, sizeof(device_name), device_name, NULL);
-    std::cout << "[OpenCL] Device Selected: " << device_name << "\n" << std::endl;
+    CHECK(clGetPlatformIDs(numPlatforms, platforms, NULL),
+          "get platforms");
 
-    // Δημιουργία Context και Command Queue
-    cl_context context = clCreateContext(NULL, 1, &device_id, NULL, NULL, &err);
-    cl_command_queue queue = clCreateCommandQueue(context, device_id, 0, &err);
+    printf("OpenCL Platforms found: %u\n", numPlatforms);
 
-    // Δημιουργία και Compile του Program
-    cl_program program = clCreateProgramWithSource(context, 1, &kernelSource, NULL, &err);
-    clBuildProgram(program, 1, &device_id, NULL, NULL, NULL);
+    // -------------------------
+    // Loop platforms
+    // -------------------------
+    for (cl_uint p = 0; p < numPlatforms; p++)
+    {
+        printf("\n==============================\n");
+        printf("Platform %u\n", p);
 
-    // Δημιουργία του Kernel
-    cl_kernel kernel = clCreateKernel(program, "integrate", &err);
+        // -------------------------
+        // Get devices
+        // -------------------------
+        cl_uint numDevices;
+        err = clGetDeviceIDs(platforms[p],
+                             CL_DEVICE_TYPE_ALL,
+                             0, NULL, &numDevices);
 
-    // Δέσμευση Μνήμης
-    cl_mem d_partial = clCreateBuffer(context, CL_MEM_WRITE_ONLY, N * sizeof(double), NULL, &err);
-    double* h_partial = new double[N];
-
-    size_t localWorkSize = 256; 
-
-    // ------------------------------------------------------------------
-    // EXECUTION LOOP FOR MODES
-    // ------------------------------------------------------------------
-    for (int mode = 0; mode <= 1; mode++) {
-        
-        size_t globalWorkSize; 
-        if (mode == 0) {
-            globalWorkSize = ((N + localWorkSize - 1) / localWorkSize) * localWorkSize;
-        } else {
-            globalWorkSize = 1024 * localWorkSize;
+        if (err != CL_SUCCESS) {
+            printf("No devices on this platform\n");
+            continue;
         }
 
-        clSetKernelArg(kernel, 0, sizeof(double), &a);
-        clSetKernelArg(kernel, 1, sizeof(double), &h);
-        clSetKernelArg(kernel, 2, sizeof(cl_mem), &d_partial);
-        clSetKernelArg(kernel, 3, sizeof(int), &mode);
+        cl_device_id *devices =
+            (cl_device_id*)malloc(numDevices * sizeof(cl_device_id));
 
-        // --- ΕΝΑΡΞΗ ΧΡΟΝΟΜΕΤΡΗΣΗΣ ---
-        auto start = std::chrono::high_resolution_clock::now();
+        CHECK(clGetDeviceIDs(platforms[p],
+                             CL_DEVICE_TYPE_ALL,
+                             numDevices,
+                             devices,
+                             NULL),
+              "get devices");
 
-        clEnqueueNDRangeKernel(queue, kernel, 1, NULL, &globalWorkSize, &localWorkSize, 0, NULL, NULL);
-        clFinish(queue);
+        printf("Devices found: %u\n", numDevices);
 
-        // --- ΛΗΞΗ ΧΡΟΝΟΜΕΤΡΗΣΗΣ ---
-        auto end = std::chrono::high_resolution_clock::now();
+        // -------------------------
+        // Loop devices
+        // -------------------------
+        for (cl_uint d = 0; d < numDevices; d++)
+        {
+            printf("\n------------------------------\n");
+            printf("Device ID: %u\n", d);
 
-        clEnqueueReadBuffer(queue, d_partial, CL_TRUE, 0, N * sizeof(double), h_partial, 0, NULL, NULL);
+            // Device name
+            char name[256];
+            clGetDeviceInfo(devices[d],
+                            CL_DEVICE_NAME,
+                            sizeof(name),
+                            name,
+                            NULL);
+            printf("Name: %s\n", name);
 
-        double sum = 0.0;
-        for (int i = 0; i < N; i++) {
-            sum += h_partial[i];
+            // Compute units
+            cl_uint computeUnits;
+            clGetDeviceInfo(devices[d],
+                            CL_DEVICE_MAX_COMPUTE_UNITS,
+                            sizeof(cl_uint),
+                            &computeUnits,
+                            NULL);
+            printf("Compute Units: %u\n", computeUnits);
+
+            // Global memory
+            cl_ulong globalMem;
+            clGetDeviceInfo(devices[d],
+                            CL_DEVICE_GLOBAL_MEM_SIZE,
+                            sizeof(cl_ulong),
+                            &globalMem,
+                            NULL);
+
+            printf("Global Memory: %.2f GB\n",
+                   globalMem / (1024.0 * 1024 * 1024));
+
+            // Local memory
+            cl_ulong localMem;
+            clGetDeviceInfo(devices[d],
+                            CL_DEVICE_LOCAL_MEM_SIZE,
+                            sizeof(cl_ulong),
+                            &localMem,
+                            NULL);
+
+            printf("Local Memory (shared): %zu KB\n",
+                   localMem / 1024);
+
+            // Max work-group size
+            size_t maxWG;
+            clGetDeviceInfo(devices[d],
+                            CL_DEVICE_MAX_WORK_GROUP_SIZE,
+                            sizeof(size_t),
+                            &maxWG,
+                            NULL);
+            printf("Max Work-Group Size: %zu\n", maxWG);
+
+            // Max dimensions
+            size_t dims[3];
+            clGetDeviceInfo(devices[d],
+                            CL_DEVICE_MAX_WORK_ITEM_SIZES,
+                            sizeof(dims),
+                            dims,
+                            NULL);
+
+            printf("Max Work Item Sizes: (%zu, %zu, %zu)\n",
+                   dims[0], dims[1], dims[2]);
+
+            cl_uint maxDims;
+            clGetDeviceInfo(devices[d],
+                            CL_DEVICE_MAX_WORK_ITEM_DIMENSIONS,
+                            sizeof(cl_uint),
+                            &maxDims,
+                            NULL);
+
+            printf("Max Dimensions: %u\n", maxDims);
+
+            // Clock frequency
+            cl_uint freq;
+            clGetDeviceInfo(devices[d],
+                            CL_DEVICE_MAX_CLOCK_FREQUENCY,
+                            sizeof(cl_uint),
+                            &freq,
+                            NULL);
+
+            printf("Clock Frequency: %u MHz\n", freq);
+
+            // Vendor
+            char vendor[256];
+            clGetDeviceInfo(devices[d],
+                            CL_DEVICE_VENDOR,
+                            sizeof(vendor),
+                            vendor,
+                            NULL);
+            printf("Vendor: %s\n", vendor);
         }
 
-        std::chrono::duration<double> elapsed = end - start;
-        std::cout << "OPENCL MODE " << mode << " (Global Size: " << globalWorkSize << ")" << std::endl;
-        std::cout << "  Integral = " << sum << std::endl;
-        std::cout << "  Device Time = " << elapsed.count() << " sec" << std::endl;
-        std::cout << "-----------------------------------------------" << std::endl;
+        free(devices);
     }
 
-    clReleaseMemObject(d_partial);
-    clReleaseKernel(kernel);
-    clReleaseProgram(program);
-    clReleaseCommandQueue(queue);
-    clReleaseContext(context);
+    free(platforms);
 
-    delete[] h_partial;
     return 0;
 }

@@ -3,51 +3,48 @@
 #include <chrono>
 #include <cuda.h>
 
-#define N 100000000 // 10^8 υποδιαιρέσεις
-#define BLOCK_SIZE 256 // Σταθερό μέγεθος block όπως συνηθίζεται στις διαφάνειες
+#define N 100000000
+#define BLOCK_SIZE 256
 
-// -------------------- DEVICE FUNCTION --------------------
 __device__ double f(double x) {
-    return x * x; // f(x) = x^2
+    return x * x;
 }
 
-// =======================================================
-// CASE 1: REGISTER / LOCAL VARIABLES (Writes N elements)
-// =======================================================
+
+//REGISTER CASE
+
 __global__ void kernel_registers(double a, double h, double *out) {
+
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (tid < N) {
         double x1 = a + tid * h;
         double x2 = a + (tid + 1) * h;
-
-        // Χρήση τοπικής μεταβλητής (καταχωρητής) πριν την εγγραφή
         double val = (f(x1) + f(x2)) * h / 2.0;
         out[tid] = val;
     }
 }
 
-// =======================================================
-// CASE 2: GLOBAL MEMORY ONLY (Writes N elements directly)
-// =======================================================
+
+//GLOBAL CASE
+
 __global__ void kernel_global(double a, double h, double *out) {
+
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (tid < N) {
         double x1 = a + tid * h;
         double x2 = a + (tid + 1) * h;
-
-        // Απευθείας εγγραφή του αποτελέσματος στην Global Memory
         out[tid] = (f(x1) + f(x2)) * h / 2.0;
     }
 }
 
-// =======================================================
-// CASE 3: SHARED MEMORY + REDUCTION (Writes 'blocks' elements)
-// =======================================================
+
+//SHARED 
+
 __global__ void kernel_shared(double a, double h, double *partial, int n_elements) {
-    // Στατική δήλωση shared μνήμης με βάση τη σταθερά BLOCK_SIZE
-    __shared__ double cache[BLOCK_SIZE]; 
+
+    __shared__ double cache[BLOCK_SIZE];
 
     int tid = threadIdx.x;
     int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -61,99 +58,152 @@ __global__ void kernel_shared(double a, double h, double *partial, int n_element
     }
 
     cache[tid] = value;
-    __syncthreads(); 
+    __syncthreads();
 
-    // Παράλληλη αναγωγή (Reduction) μέσα στο block
-    for (int step = blockDim.x / 2; step > 0; step /= 2) {
-        if (tid < step) {
-            cache[tid] += cache[tid + step];
+    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            cache[tid] += cache[tid + s];
         }
-        __syncthreads(); 
+        __syncthreads();
     }
 
-    // Το thread 0 κάθε block γράφει το μερικό άθροισμα στην global memory
     if (tid == 0) {
         partial[blockIdx.x] = cache[0];
     }
 }
 
-// =======================================================
-// MAIN
-// =======================================================
+
+//REDUCTION KERNEL (FULL GPU FINAL SUM)
+
+__global__ void reduce(double *input, double *output, int n) {
+
+    __shared__ double cache[BLOCK_SIZE];
+
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int local = threadIdx.x;
+
+    double val = (tid < n) ? input[tid] : 0.0;
+
+    cache[local] = val;
+    __syncthreads();
+
+    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (local < s) {
+            cache[local] += cache[local + s];
+        }
+        __syncthreads();
+    }
+
+    if (local == 0) {
+        output[blockIdx.x] = cache[0];
+    }
+}
+
+
+//FULL GPU REDUCTION PIPELINE
+
+double gpu_reduce(double *d_in, double *d_tmp, int n, int threads) {
+
+    double *in = d_in;
+    double *out = d_tmp;
+
+    while (n > 1) {
+
+        int blocks = (n + threads - 1) / threads;
+
+        reduce<<<blocks, threads>>>(in, out, n);
+        cudaDeviceSynchronize();
+
+        n = blocks;
+
+        double *tmp = in;
+        in = out;
+        out = tmp;
+    }
+
+    double result;
+    cudaMemcpy(&result, in, sizeof(double), cudaMemcpyDeviceToHost);
+    return result;
+}
+
+
+//MAIN
+
 int main() {
+
     double a = 0.0, b = 10.0;
     double h = (b - a) / N;
 
-    int threadsPerBlock = BLOCK_SIZE; // Χρήση της σταθεράς μας
+    int threadsPerBlock = BLOCK_SIZE;
     int blocks = (N + threadsPerBlock - 1) / threadsPerBlock;
 
-    std::cout << "--- Starting CUDA Memory Models Experiment (Static Shared) ---" << std::endl;
-    std::cout << "N = " << N << ", Threads Per Block = " << threadsPerBlock << ", Total Blocks = " << blocks << "\n" << std::endl;
-
-    // -------------------------------------------------------
-    // ΠΕΙΡΑΜΑ 1 & 2: REGISTERS & GLOBAL MEMORY (Χρειάζονται μέγεθος N)
-    // -------------------------------------------------------
     double *h_out_N = new double[N];
-    double *d_out_N;
-    cudaMalloc(&d_out_N, N * sizeof(double)); 
+    double *d_out_N, *d_tmp;
 
-    // --- Τρέξιμο του Kernel 1 (Registers) ---
+    cudaMalloc(&d_out_N, N * sizeof(double));
+    cudaMalloc(&d_tmp, N * sizeof(double));
+
+    std::cout << "--- CUDA MEMORY MODELS (FULL GPU REDUCTION) ---\n";
+
+
+    //REGISTER
+    
     auto start = std::chrono::high_resolution_clock::now();
+
     kernel_registers<<<blocks, threadsPerBlock>>>(a, h, d_out_N);
     cudaDeviceSynchronize();
 
-    auto end = std::chrono::high_resolution_clock::now();
-    cudaMemcpy(h_out_N, d_out_N, N * sizeof(double), cudaMemcpyDeviceToHost);
-    
-    double sum_reg = 0.0;
-    for (int i = 0; i < N; i++) sum_reg += h_out_N[i];
-    
-    std::chrono::duration<double> elapsed_reg = end - start;
-    std::cout << "1. REGISTER CASE    -> Integral = " << sum_reg << " | Time = " << elapsed_reg.count() << " sec" << std::endl;
+    double sum_reg = gpu_reduce(d_out_N, d_tmp, N, threadsPerBlock);
 
-    // --- Τρέξιμο του Kernel 2 (Global Memory) ---
+    auto end = std::chrono::high_resolution_clock::now();
+
+    std::cout << "\n1. REGISTER CASE -> " << sum_reg
+              << " | Time = "
+              << std::chrono::duration<double>(end - start).count()
+              << " sec\n";
+
+  
+    //GLOBAL
+
     start = std::chrono::high_resolution_clock::now();
+
     kernel_global<<<blocks, threadsPerBlock>>>(a, h, d_out_N);
     cudaDeviceSynchronize();
-    
+
+    double sum_glob = gpu_reduce(d_out_N, d_tmp, N, threadsPerBlock);
+
     end = std::chrono::high_resolution_clock::now();
 
-    cudaMemcpy(h_out_N, d_out_N, N * sizeof(double), cudaMemcpyDeviceToHost);
-    
-    double sum_glob = 0.0;
-    for (int i = 0; i < N; i++) sum_glob += h_out_N[i];
-    
-    std::chrono::duration<double> elapsed_glob = end - start;
-    std::cout << "2. GLOBAL CASE      -> Integral = " << sum_glob << " | Time = " << elapsed_glob.count() << " sec" << std::endl;
+    std::cout << "\n2. GLOBAL CASE -> " << sum_glob
+              << " | Time = "
+              << std::chrono::duration<double>(end - start).count()
+              << " sec\n";
 
-    // Αποδέσμευση της μνήμης μεγέθους N
-    cudaFree(d_out_N);
-    delete[] h_out_N;
 
-    // -------------------------------------------------------
-    // ΠΕΙΡΑΜΑ 3: SHARED MEMORY REDUCTION (Χρειάζεται μέγεθος blocks)
-    // -------------------------------------------------------
-    double *h_out_blocks = new double[blocks];
-    double *d_out_blocks;
-    cudaMalloc(&d_out_blocks, blocks * sizeof(double)); 
+    //SHARED
+
+    double *d_blocks;
+    cudaMalloc(&d_blocks, blocks * sizeof(double));
 
     start = std::chrono::high_resolution_clock::now();
-    // Καθαρή κλήση χωρίς το 3ο όρισμα, αφού η shared μνήμη ορίστηκε στατικά
-    kernel_shared<<<blocks, threadsPerBlock>>>(a, h, d_out_blocks, N);
+
+    kernel_shared<<<blocks, threadsPerBlock>>>(a, h, d_blocks, N);
     cudaDeviceSynchronize();
-  
+
+    double sum_shared = gpu_reduce(d_blocks, d_tmp, blocks, threadsPerBlock);
+
     end = std::chrono::high_resolution_clock::now();
-    cudaMemcpy(h_out_blocks, d_out_blocks, blocks * sizeof(double), cudaMemcpyDeviceToHost);
 
-    double sum_shared = 0.0;
-    for (int i = 0; i < blocks; i++) sum_shared += h_out_blocks[i];
-    
-    std::chrono::duration<double> elapsed_shared = end - start;
-    std::cout << "3. SHARED (REDUCE)  -> Integral = " << sum_shared << " | Time = " << elapsed_shared.count() << " sec" << std::endl;
+    std::cout << "\n3. SHARED CASE -> " << sum_shared
+              << " | Time = "
+              << std::chrono::duration<double>(end - start).count()
+              << " sec\n";
 
-    // Αποδέσμευση της μνήμης μεγέθους blocks
-    cudaFree(d_out_blocks);
-    delete[] h_out_blocks;
+    cudaFree(d_out_N);
+    cudaFree(d_tmp);
+    cudaFree(d_blocks);
+
+    delete[] h_out_N;
 
     return 0;
 }

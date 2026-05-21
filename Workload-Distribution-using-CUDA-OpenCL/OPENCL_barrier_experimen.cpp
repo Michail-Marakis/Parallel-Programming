@@ -1,47 +1,120 @@
 #include <iostream>
 #include <cmath>
 #include <chrono>
-#include <vector>
 #include <CL/cl.h>
 
-#define N 100000
+#define N 100000000
+#define BLOCK_SIZE 128
 
-// -------------------- OPENCL KERNEL SOURCE CODE --------------------
 const char* kernelSource = R"(
 double f(double x) {
     return x * x;
 }
 
-__kernel void integrate_sync(double a, double h, __global double* partial_sum, int use_barrier) {
-    
-    // __local: Δημιουργία shared memory (Local Memory) μέσα στο Work-group
-    __local double cache[256]; 
+// =======================================================
+// 1. REGISTER CASE
+// =======================================================
+__kernel void kernel_registers(double a, double h, __global double* output, int use_barrier, int n_elements) {
+    __local double cache[BLOCK_SIZE];
+    int tid = get_global_id(0);
+    int lid = get_local_id(0);
+    int local_size = get_local_size(0);
 
-    int tid = get_global_id(0);   // Global thread ID
-    int local_id = get_local_id(0); // Local thread ID inside the work-group
-
+    // Υπολογισμός με τοπικές μεταβλητές (Registers)
     double val = 0.0;
-
-    if (tid < 100000) {
+    if (tid < n_elements) {
         double x1 = a + tid * h;
         double x2 = a + (tid + 1) * h;
         val = (f(x1) + f(x2)) * h / 2.0;
     }
 
-    // Κάθε νήμα γράφει στην τοπική μνήμη (Shared/Local Memory)
-    cache[local_id] = val;
+    cache[lid] = val;
 
-    // Υλοποίηση του Barrier Συγχρονισμού
     if (use_barrier) {
-        // Αντίστοιχο του __syncthreads(). 
-        // Το CLK_LOCAL_MEM_FENCE επιβάλλει σε όλα τα work-items να περιμένουν
-        // μέχρι να ολοκληρωθούν όλες οι εγγραφές στη Local Memory.
         barrier(CLK_LOCAL_MEM_FENCE);
     }
 
-    // Ανάγνωση από την cache και εγγραφή στην Global Μνήμη
-    if (tid < 100000) {
-        partial_sum[tid] = cache[local_id];
+    for (int s = local_size / 2; s > 0; s /= 2) {
+        if (lid < s) {
+            cache[lid] += cache[lid + s];
+        }
+        if (use_barrier) {
+            barrier(CLK_LOCAL_MEM_FENCE);
+        }
+    }
+
+    if (lid == 0) {
+        output[get_group_id(0)] = cache[0];
+    }
+}
+
+// =======================================================
+// 2. GLOBAL CASE
+// =======================================================
+__kernel void kernel_global(double a, double h, __global double* output, int use_barrier, int n_elements) {
+    __local double cache[BLOCK_SIZE];
+    int tid = get_global_id(0);
+    int lid = get_local_id(0);
+    int local_size = get_local_size(0);
+
+    // Απευθείας ανάγνωση και εγγραφή από/προς τη Global μνήμη χωρίς ενδιάμεσο register
+    if (tid < n_elements) {
+        cache[lid] = (f(a + tid * h) + f(a + (tid + 1) * h)) * h / 2.0;
+    } else {
+        cache[lid] = 0.0;
+    }
+
+    if (use_barrier) {
+        barrier(CLK_LOCAL_MEM_FENCE);
+    }
+
+    for (int s = local_size / 2; s > 0; s /= 2) {
+        if (lid < s) {
+            cache[lid] += cache[lid + s];
+        }
+        if (use_barrier) {
+            barrier(CLK_LOCAL_MEM_FENCE);
+        }
+    }
+
+    if (lid == 0) {
+        output[get_group_id(0)] = cache[0];
+    }
+}
+
+// =======================================================
+// 3. SHARED CASE
+// =======================================================
+__kernel void kernel_shared(double a, double h, __global double* output, int use_barrier, int n_elements, __local double* cache) {
+    int tid = get_global_id(0);
+    int lid = get_local_id(0);
+    int local_size = get_local_size(0);
+
+    double val = 0.0;
+    if (tid < n_elements) {
+        double x1 = a + tid * h;
+        double x2 = a + (tid + 1) * h;
+        val = (f(x1) + f(x2)) * h / 2.0;
+    }
+
+    // Ρητή χρήση της __local μνήμης για την αποθήκευση πριν από οποιαδήποτε άλλη πράξη
+    cache[lid] = val;
+
+    if (use_barrier) {
+        barrier(CLK_LOCAL_MEM_FENCE);
+    }
+
+    for (int s = local_size / 2; s > 0; s /= 2) {
+        if (lid < s) {
+            cache[lid] += cache[lid + s];
+        }
+        if (use_barrier) {
+            barrier(CLK_LOCAL_MEM_FENCE);
+        }
+    }
+
+    if (lid == 0) {
+        output[get_group_id(0)] = cache[0];
     }
 }
 )";
@@ -50,15 +123,10 @@ int main() {
     double a = 0.0, b = 10.0;
     double h = (b - a) / N;
 
-    // ------------------------------------------------------------------
-    // INITIALIZE OPENCL ENVIRONMENT
-    // ------------------------------------------------------------------
     cl_platform_id platform_id;
     cl_device_id device_id;
-    cl_uint num_devices, num_platforms;
-
-    clGetPlatformIDs(1, &platform_id, &num_platforms);
-    clGetDeviceIDs(platform_id, CL_DEVICE_TYPE_GPU, 1, &device_id, &num_devices);
+    clGetPlatformIDs(1, &platform_id, NULL);
+    clGetDeviceIDs(platform_id, CL_DEVICE_TYPE_GPU, 1, &device_id, NULL);
 
     cl_context context = clCreateContext(NULL, 1, &device_id, NULL, NULL, NULL);
     cl_command_queue queue = clCreateCommandQueue(context, device_id, 0, NULL);
@@ -66,50 +134,86 @@ int main() {
     cl_program program = clCreateProgramWithSource(context, 1, &kernelSource, NULL, NULL);
     clBuildProgram(program, 1, &device_id, NULL, NULL, NULL);
 
-    cl_kernel kernel = clCreateKernel(program, "integrate_sync", NULL);
+    cl_kernel k_reg = clCreateKernel(program, "kernel_registers", NULL);
+    cl_kernel k_glob = clCreateKernel(program, "kernel_global", NULL);
+    cl_kernel k_shr = clCreateKernel(program, "kernel_shared", NULL);
 
-    cl_mem d_partial = clCreateBuffer(context, CL_MEM_WRITE_ONLY, N * sizeof(double), NULL, NULL);
-    double* h_partial = new double[N];
-
-    size_t localWorkSize = 256; // 256 threads per block/group
+    size_t localWorkSize = BLOCK_SIZE;
     size_t globalWorkSize = ((N + localWorkSize - 1) / localWorkSize) * localWorkSize;
+    size_t numGroups = globalWorkSize / localWorkSize;
+    int n_local = N;
+
+    cl_mem d_output = clCreateBuffer(context, CL_MEM_READ_WRITE, numGroups * sizeof(double), NULL, NULL);
+    double* h_partial = new double[numGroups];
+
+    std::cout << "--- OPENCL MEMORY MODELS & BARRIER TEST (SIMPLE FLOW) ---\n";
 
     for (int use_barrier = 0; use_barrier <= 1; use_barrier++) {
+        std::cout << "\n==================================";
+        std::cout << "\n TESTING WITH BARRIER = " << use_barrier << "\n==================================\n";
 
-        clSetKernelArg(kernel, 0, sizeof(double), &a);
-        clSetKernelArg(kernel, 1, sizeof(double), &h);
-        clSetKernelArg(kernel, 2, sizeof(cl_mem), &d_partial);
-        clSetKernelArg(kernel, 3, sizeof(int), &use_barrier);
+        // 1. REGISTER CASE
+        clSetKernelArg(k_reg, 0, sizeof(double), &a);
+        clSetKernelArg(k_reg, 1, sizeof(double), &h);
+        clSetKernelArg(k_reg, 2, sizeof(cl_mem), &d_output);
+        clSetKernelArg(k_reg, 3, sizeof(int), &use_barrier);
+        clSetKernelArg(k_reg, 4, sizeof(int), &n_local);
 
-        // --- ΕΝΑΡΞΗ ΧΡΟΝΟΜΕΤΡΗΣΗΣ ---
-        auto start = std::chrono::high_resolution_clock::now();
-
-        clEnqueueNDRangeKernel(queue, kernel, 1, NULL, &globalWorkSize, &localWorkSize, 0, NULL, NULL);
+        auto start1 = std::chrono::high_resolution_clock::now();
+        clEnqueueNDRangeKernel(queue, k_reg, 1, NULL, &globalWorkSize, &localWorkSize, 0, NULL, NULL);
         clFinish(queue);
+        auto end1 = std::chrono::high_resolution_clock::now();
 
-        // --- ΛΗΞΗ ΧΡΟΝΟΜΕΤΡΗΣΗΣ ---
-        auto end = std::chrono::high_resolution_clock::now();
+        clEnqueueReadBuffer(queue, d_output, CL_TRUE, 0, numGroups * sizeof(double), h_partial, 0, NULL, NULL);
+        double sum1 = 0.0;
+        for (size_t i = 0; i < numGroups; i++) sum1 += h_partial[i];
+        std::cout << "1. REGISTER -> Integral = " << sum1 << " | Time = " << std::chrono::duration<double>(end1 - start1).count() << " sec\n";
 
-        clEnqueueReadBuffer(queue, d_partial, CL_TRUE, 0, N * sizeof(double), h_partial, 0, NULL, NULL);
+        // 2. GLOBAL CASE
+        clSetKernelArg(k_glob, 0, sizeof(double), &a);
+        clSetKernelArg(k_glob, 1, sizeof(double), &h);
+        clSetKernelArg(k_glob, 2, sizeof(cl_mem), &d_output);
+        clSetKernelArg(k_glob, 3, sizeof(int), &use_barrier);
+        clSetKernelArg(k_glob, 4, sizeof(int), &n_local);
 
-        double sum = 0.0;
-        for (int i = 0; i < N; i++) {
-            sum += h_partial[i];
-        }
+        auto start2 = std::chrono::high_resolution_clock::now();
+        clEnqueueNDRangeKernel(queue, k_glob, 1, NULL, &globalWorkSize, &localWorkSize, 0, NULL, NULL);
+        clFinish(queue);
+        auto end2 = std::chrono::high_resolution_clock::now();
 
-        std::chrono::duration<double> elapsed = end - start;
-        std::cout << "\nBARRIER = " << use_barrier << std::endl;
-        std::cout << "  Integral = " << sum << std::endl;
-        std::cout << "  Time     = " << elapsed.count() << " sec" << std::endl;
-        std::cout << "-----------------------------------------------" << std::endl;
+        clEnqueueReadBuffer(queue, d_output, CL_TRUE, 0, numGroups * sizeof(double), h_partial, 0, NULL, NULL);
+        double sum2 = 0.0;
+        for (size_t i = 0; i < numGroups; i++) sum2 += h_partial[i];
+        std::cout << "2. GLOBAL   -> Integral = " << sum2 << " | Time = " << std::chrono::duration<double>(end2 - start2).count() << " sec\n";
+
+        // 3. SHARED CASE
+        clSetKernelArg(k_shr, 0, sizeof(double), &a);
+        clSetKernelArg(k_shr, 1, sizeof(double), &h);
+        clSetKernelArg(k_shr, 2, sizeof(cl_mem), &d_output);
+        clSetKernelArg(k_shr, 3, sizeof(int), &use_barrier);
+        clSetKernelArg(k_shr, 4, sizeof(int), &n_local);
+        clSetKernelArg(k_shr, 5, localWorkSize * sizeof(double), NULL); // Δυναμικό allocation τοπικής μνήμης
+
+        auto start3 = std::chrono::high_resolution_clock::now();
+        clEnqueueNDRangeKernel(queue, k_shr, 1, NULL, &globalWorkSize, &localWorkSize, 0, NULL, NULL);
+        clFinish(queue);
+        auto end3 = std::chrono::high_resolution_clock::now();
+
+        clEnqueueReadBuffer(queue, d_output, CL_TRUE, 0, numGroups * sizeof(double), h_partial, 0, NULL, NULL);
+        double sum3 = 0.0;
+        for (size_t i = 0; i < numGroups; i++) sum3 += h_partial[i];
+        std::cout << "3. SHARED   -> Integral = " << sum3 << " | Time = " << std::chrono::duration<double>(end3 - start3).count() << " sec\n";
     }
 
-    clReleaseMemObject(d_partial);
-    clReleaseKernel(kernel);
+    // Cleanup
+    delete[] h_partial;
+    clReleaseMemObject(d_output);
+    clReleaseKernel(k_reg);
+    clReleaseKernel(k_glob);
+    clReleaseKernel(k_shr);
     clReleaseProgram(program);
     clReleaseCommandQueue(queue);
     clReleaseContext(context);
-    delete[] h_partial;
 
     return 0;
 }

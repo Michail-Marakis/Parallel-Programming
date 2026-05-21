@@ -3,7 +3,7 @@
 #include <chrono>
 #include <CL/cl.h>
 
-const int N = 100000;
+#define N 100000000
 
 const char* kernelSource = R"(
 double f(double x) {
@@ -12,26 +12,36 @@ double f(double x) {
 
 __kernel void integrate_reduce(double a, double h,
                                __global double* output,
-                               int N) {
+                               int N,
+                               int mode) {
 
     int tid = get_global_id(0);
     int local_id = get_local_id(0);
     int local_size = get_local_size(0);
+    int stride = get_global_size(0);
 
-    __local double cache[512]; // max block size
+    __local double cache[256];
 
     double val = 0.0;
 
-    if (tid < N) {
-        double x1 = a + tid * h;
-        double x2 = a + (tid + 1) * h;
-        val = (f(x1) + f(x2)) * h / 2.0;
+    if (mode == 0) {
+        if (tid < N) {
+            double x1 = a + tid * h;
+            double x2 = a + (tid + 1) * h;
+            val = (f(x1) + f(x2)) * h / 2.0;
+        }
+    } else {
+        for (int i = tid; i < N; i += stride) {
+            double x1 = a + i * h;
+            double x2 = a + (i + 1) * h;
+            val += (f(x1) + f(x2)) * h / 2.0;
+        }
     }
 
     cache[local_id] = val;
     barrier(CLK_LOCAL_MEM_FENCE);
 
-    for (int s = local_size / 2; s > 0; s /= 2) {
+    for (int s = local_size / 2; s > 0; s >>= 1) {
         if (local_id < s) {
             cache[local_id] += cache[local_id + s];
         }
@@ -51,17 +61,14 @@ __kernel void reduce(__global double* input,
     int local_id = get_local_id(0);
     int local_size = get_local_size(0);
 
-    __local double cache[512];
+    __local double cache[256];
 
-    double val = 0.0;
-    if (tid < N) {
-        val = input[tid];
-    }
+    double val = (tid < N) ? input[tid] : 0.0;
 
     cache[local_id] = val;
     barrier(CLK_LOCAL_MEM_FENCE);
 
-    for (int s = local_size / 2; s > 0; s /= 2) {
+    for (int s = local_size / 2; s > 0; s >>= 1) {
         if (local_id < s) {
             cache[local_id] += cache[local_id + s];
         }
@@ -79,12 +86,15 @@ int main() {
     double a = 0.0, b = 10.0;
     double h = (b - a) / N;
 
+    // ================= CPU DEVICE =================
     cl_platform_id platform;
     cl_device_id device;
     cl_uint num;
 
     clGetPlatformIDs(1, &platform, &num);
-    clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, 1, &device, &num);
+
+    // 🔥 CPU DEVICE (NOT GPU)
+    clGetDeviceIDs(platform, CL_DEVICE_TYPE_CPU, 1, &device, &num);
 
     cl_context context = clCreateContext(NULL, 1, &device, NULL, NULL, NULL);
     cl_command_queue queue = clCreateCommandQueue(context, device, 0, NULL);
@@ -95,52 +105,69 @@ int main() {
     cl_kernel k_integrate = clCreateKernel(program, "integrate_reduce", NULL);
     cl_kernel k_reduce = clCreateKernel(program, "reduce", NULL);
 
-    int blockSizes[] = {32, 64, 128, 256, 512};
+    size_t localWorkSize = 256;
 
-    std::cout << "--- FULL GPU Block Size Experiment ---" << std::endl;
+    for (int mode = 0; mode <= 1; mode++) {
 
-    for (int bsize : blockSizes) {
-
-        size_t localWorkSize = bsize;
-        size_t globalWorkSize = ((N + localWorkSize - 1) / localWorkSize) * localWorkSize;
+        size_t globalWorkSize =
+            (mode == 0)
+            ? ((N + localWorkSize - 1) / localWorkSize) * localWorkSize
+            : 1024 * localWorkSize;
 
         size_t firstGroups = globalWorkSize / localWorkSize;
 
-        cl_mem d_output = clCreateBuffer(context, CL_MEM_READ_WRITE,
-                                         firstGroups * sizeof(double), NULL, NULL);
+        cl_mem d_output = clCreateBuffer(
+            context,
+            CL_MEM_READ_WRITE,
+            firstGroups * sizeof(double),
+            NULL,
+            NULL
+        );
 
-        // -------- FIRST PASS --------
         clSetKernelArg(k_integrate, 0, sizeof(double), &a);
         clSetKernelArg(k_integrate, 1, sizeof(double), &h);
         clSetKernelArg(k_integrate, 2, sizeof(cl_mem), &d_output);
-        clSetKernelArg(k_integrate, 3, sizeof(int), &N);
+
+        int N_val = N;
+        clSetKernelArg(k_integrate, 3, sizeof(int), &N_val);
+        clSetKernelArg(k_integrate, 4, sizeof(int), &mode);
 
         auto start = std::chrono::high_resolution_clock::now();
 
         clEnqueueNDRangeKernel(queue, k_integrate, 1, NULL,
-                               &globalWorkSize, &localWorkSize, 0, NULL, NULL);
+                               &globalWorkSize, &localWorkSize,
+                               0, NULL, NULL);
 
         clFinish(queue);
 
-        // -------- MULTI PASS REDUCTION --------
+        // ================= REDUCTION =================
         size_t currentSize = firstGroups;
         cl_mem d_in = d_output;
-        cl_mem d_out;
+        cl_mem d_out = NULL;
 
         while (currentSize > 1) {
 
-            size_t newGlobal = ((currentSize + localWorkSize - 1) / localWorkSize) * localWorkSize;
+            size_t newGlobal =
+                ((currentSize + localWorkSize - 1) / localWorkSize)
+                * localWorkSize;
+
             size_t numGroups = newGlobal / localWorkSize;
 
-            d_out = clCreateBuffer(context, CL_MEM_READ_WRITE,
-                                   numGroups * sizeof(double), NULL, NULL);
+            d_out = clCreateBuffer(
+                context,
+                CL_MEM_READ_WRITE,
+                numGroups * sizeof(double),
+                NULL,
+                NULL
+            );
 
             clSetKernelArg(k_reduce, 0, sizeof(cl_mem), &d_in);
             clSetKernelArg(k_reduce, 1, sizeof(cl_mem), &d_out);
             clSetKernelArg(k_reduce, 2, sizeof(int), &currentSize);
 
             clEnqueueNDRangeKernel(queue, k_reduce, 1, NULL,
-                                   &newGlobal, &localWorkSize, 0, NULL, NULL);
+                                   &newGlobal, &localWorkSize,
+                                   0, NULL, NULL);
 
             clFinish(queue);
 
@@ -149,19 +176,19 @@ int main() {
             currentSize = numGroups;
         }
 
+        double result;
+
+        clEnqueueReadBuffer(queue, d_in, CL_TRUE, 0,
+                            sizeof(double), &result,
+                            0, NULL, NULL);
+
         auto end = std::chrono::high_resolution_clock::now();
 
-        double result;
-        clEnqueueReadBuffer(queue, d_in, CL_TRUE, 0,
-                            sizeof(double), &result, 0, NULL, NULL);
-
-        std::chrono::duration<double> elapsed = end - start;
-
-        std::cout << "\nBLOCK SIZE = " << bsize << std::endl;
-        std::cout << "  Global Size = " << globalWorkSize << std::endl;
-        std::cout << "  Integral    = " << result << std::endl;
-        std::cout << "  GPU Time    = " << elapsed.count() << " sec" << std::endl;
-        std::cout << "----------------------------------" << std::endl;
+        std::cout << "\nMODE " << mode << " (CPU OpenCL)" << std::endl;
+        std::cout << "Integral = " << result << std::endl;
+        std::cout << "Time = "
+                  << std::chrono::duration<double>(end - start).count()
+                  << " sec" << std::endl;
 
         clReleaseMemObject(d_in);
     }

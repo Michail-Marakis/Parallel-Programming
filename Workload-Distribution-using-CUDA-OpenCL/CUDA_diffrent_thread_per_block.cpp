@@ -5,14 +5,14 @@
 
 #define N 100000000
 
-// ---------------- DEVICE FUNCTION ----------------
+
 __device__ double f(double x) {
     return x * x;
 }
 
-// =======================================================
-// STRATEGY 1: MULTIPLE ELEMENTS PER THREAD (Grid-Stride)
-// =======================================================
+
+//STRATEGY 1: MULTIPLE ELEMENTS PER THREAD (Grid-Stride)
+
 __global__ void integrate_multi(double a, double h, double *out) {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     int stride = blockDim.x * gridDim.x;
@@ -26,9 +26,9 @@ __global__ void integrate_multi(double a, double h, double *out) {
     out[tid] = sum;
 }
 
-// =======================================================
-// STRATEGY 2: ONE ELEMENT PER THREAD
-// =======================================================
+
+//STRATEGY 2: ONE ELEMENT PER THREAD
+
 __global__ void integrate_one(double a, double h, double *out) {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -39,9 +39,9 @@ __global__ void integrate_one(double a, double h, double *out) {
     }
 }
 
-// =======================================================
-// COMMON DYNAMIC REDUCTION KERNEL
-// =======================================================
+/
+//REDUCTION KERNEL
+
 __global__ void reduce(double *input, double *output, int n) {
     extern __shared__ double cache[]; 
 
@@ -64,13 +64,11 @@ __global__ void reduce(double *input, double *output, int n) {
     }
 }
 
-// =======================================================
-// MAIN PIPELINE EXECUTION
-// =======================================================
+
 void run_experiment(const char* label, int blocks, int threadsPerBlock, int starting_n, double a, double h, int use_multi_kernel, double *d_in, double *d_tmp) {
     auto start = std::chrono::high_resolution_clock::now();
 
-    // 1. Υπολογισμός Ολοκληρώματος
+    //Υπολογισμός Ολοκληρώματος
     if (use_multi_kernel) {
         integrate_multi<<<blocks, threadsPerBlock>>>(a, h, d_in);
     } else {
@@ -78,7 +76,7 @@ void run_experiment(const char* label, int blocks, int threadsPerBlock, int star
     }
     cudaDeviceSynchronize();
 
-    // 2. Full GPU Reduction
+    //Full GPU Reduction
     int n = starting_n;
     double *in = d_in;
     double *out = d_tmp;
@@ -107,7 +105,7 @@ int main() {
     double h = (b - a) / N;
 
     int blockSizes[] = {32, 64, 128, 256, 512};
-    int static_blocks = 1024; // Σταθερά blocks για το Multi-element
+    int static_blocks = 1024; //Σταθερά blocks για το Multi-element
 
     std::cout << "--- CUDA COMPLETE EXPERIMENT (ALL BLOCK SIZES & WORKLOADS) ---\n";
     std::cout << "N = " << N << "\n";
@@ -117,7 +115,7 @@ int main() {
         std::cout << " TESTING WITH BLOCK SIZE = " << bsize;
         std::cout << "\n=========================================\n";
 
-        // --- ΠΕΙΡΑΜΑ 1: MULTIPLE ELEMENTS PER THREAD ---
+        //MULTIPLE ELEMENTS PER THREAD
         int totalThreadsMulti = static_blocks * bsize;
         double *d_in_m, *d_tmp_m;
         cudaMalloc(&d_in_m, totalThreadsMulti * sizeof(double));
@@ -128,10 +126,11 @@ int main() {
         cudaFree(d_in_m);
         cudaFree(d_tmp_m);
 
-        // --- ΠΕΙΡΑΜΑ 2: ONE ELEMENT PER THREAD ---
+        //ONE ELEMENT PER THREAD
         int blocksOne = (N + bsize - 1) / bsize; 
         double *d_in_o, *d_tmp_o;
-        // Εδώ χρειαζόμαστε buffer μεγέθους N επειδή παράγονται N αρχικά στοιχεία
+        
+        //Εδώ χρειαζόμαστε buffer μεγέθους N επειδή παράγονται N αρχικά στοιχεία
         cudaMalloc(&d_in_o, N * sizeof(double));
         cudaMalloc(&d_tmp_o, blocksOne * sizeof(double));
 

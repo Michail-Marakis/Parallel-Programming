@@ -9,51 +9,51 @@ The core objective is to isolate, profile, and mitigate hardware-specific bottle
 
 ---
 
-## 📂 Repository Architecture & Subsystems
+## Repository Architecture & Subsystems
 
-> 📂 **Parallel-Programming/** *(Root)*
+> **Parallel-Programming/** *(Root)*
 > 
-> * 📂 **Workload-Distribution-using-CUDA-OpenCL/** ──► *[Track 1: GPU Hardware Acceleration]*
+> * **Workload-Distribution-using-CUDA-OpenCL/** ──► *[Track 1: GPU Hardware Acceleration]*
 >     * 📄 `code / scripts`
 >     * 📄 `cuda-opencl-report.pdf`
-> * 📂 **Workload-Distribution-using-OpenMP/** ──► *[Track 1: OpenMP Parallelism]*
+> * **Workload-Distribution-using-OpenMP/** ──► *[Track 1: OpenMP Parallelism]*
 >     * 📄 `code / scripts`
 >     * 📄 `OpenMP-report.pdf`
-> * 📂 **Workload-Distribution-using-pthreads/** ──► *[Track 1: Low-Level OS Threading & Locks]*
+> * **Workload-Distribution-using-pthreads/** ──► *[Track 1: Low-Level OS Threading & Locks]*
 >     * 📄 `code / scripts`
 >     * 📄 `pthread-report.pdf`
-> * 📂 **multithread-pizza-store-simulation/** ──► *[Track 2: Asynchronous Event-Driven Pipeline]*
+> * **multithread-pizza-store-simulation/** ──► *[Track 2: Asynchronous Event-Driven Pipeline]*
 >     * 📄 `code / scripts`
 
 ---
 
-## ⚙️ Track 1: Computational Workload Distribution (Numerical Solvers)
+## Track 1: Computational Workload Distribution (Numerical Solvers)
 
 These modules benchmark an identical mathematical workload across different abstraction layers to analyze hardware exploitation efficiency. Detailed performance profiles are compiled within the embedded PDF reports inside each subdirectory.
 
-### 🔹 Massively Parallel Heterogeneous Computing (GPU)
-*📂 Workload-Distribution-using-CUDA-OpenCL*
+### Massively Parallel Heterogeneous Computing (GPU)
+*Workload-Distribution-using-CUDA-OpenCL*
 * Comparative evaluation of native NVIDIA CUDA against cross-platform OpenCL.
 * Optimization of Streaming Multiprocessor (SM) occupancy and warp execution efficiency via fine-tuning threads-per-block metrics.
 * Elimination of global memory bus saturation by implementing explicit **Shared Memory/Local Scratchpad** caching.
 * Profiling hardware barrier overhead (`__syncthreads()`) during parallel data reduction.
 
-### 🔹 Multi-Core Shared-Memory Parallelism (CPU)
-*📂 Workload-Distribution-using-OpenMP*
+### Multi-Core Shared-Memory Parallelism (CPU)
+*Workload-Distribution-using-OpenMP*
 * Evaluation of loop-based vs. deep recursive task-based scheduling.
 * Load balancing via data-reduction primitives to eliminate load imbalance across asymmetric CPU cores.
 
-### 🔹 Native OS Kernel Threading & Core Synchronization
-*📂 Workload-Distribution-using-pthreads*
+### Native OS Kernel Threading & Core Synchronization
+*Workload-Distribution-using-pthreads*
 * Direct POSIX Threads (Pthreads) lifecycle management (manual thread-spawning, load-decomposition boundaries, and join-fences).
 * Comprehensive lock contention profiling: evaluating Mutex synchronization blocks (`integration-using-locks.cpp`) against completely lock-free vectorized architectures (`integration-no-locks.cpp`).
 
 ---
 
-## 🍕 Track 2: Asynchronous Event-Driven Architecture (Systems Application)
+## Track 2: Asynchronous Event-Driven Architecture (Systems Application)
 
-### 🔹 Multi-Threaded Pipeline Simulation
-*📂 multithread-pizza-store-simulation*
+### Multi-Threaded Pipeline Simulation
+*multithread-pizza-store-simulation*
 * **Architecture:** A real-world application of the **Producer-Consumer design pattern**, modeling an asynchronous, multi-stage transaction pipeline (Order Placement ➔ Preparation ➔ Baking ➔ Delivery).
 * **Concurrency Controls:** Implements POSIX threads managed entirely via native synchronization primitives. Uses explicit **Mutex Locks** to protect shared states (available ingredients, oven slots, delivery drivers) and **Condition Variables** to handle non-blocking thread signaling and context switching.
 * **Failure Mitigation:** Engineered to prevent catastrophic multi-threading failures such as **deadlocks**, **thread starvation**, and **race conditions** under continuous, high-volume asynchronous order traffic.
@@ -61,7 +61,7 @@ These modules benchmark an identical mathematical workload across different abst
 
 ---
 
-## 📈 High-Performance Engineering Key Insights
+## High-Performance Engineering Key Insights
 
 * **Thread Contention vs. Throughput:** Profiling the numerical solvers verified that native mutex constraints degrade performance exponentially under heavy core scaling. Vectorized reduction and lock-free execution pathing achieved near-linear scaling metrics.
 * **Pipeline Synchronization Efficiency:** In the asynchronous storefront simulation, fine-grained locking over distinct resource groups (e.g., separating oven blocks from driver pools) drastically reduced thread blocking states compared to a coarse global lock approach.
@@ -69,7 +69,7 @@ These modules benchmark an identical mathematical workload across different abst
 
 ---
 
-## 🛠️ Toolchain & Compilation
+## Toolchain & Compilation
 
 Ensure your target system has the necessary compiler infrastructures and hardware-vendor backends configured.
 

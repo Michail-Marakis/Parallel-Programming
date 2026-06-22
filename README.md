@@ -1,7 +1,6 @@
 # High-Performance Numerical Integration Solvers
 
 [![Language](https://img.shields.io/badge/Language-C%2B%2B-blue.svg)](https://isocpp.org/)
-[![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20CUDA-green.svg)](https://developer.nvidia.com/cuda-zone)
 [![Frameworks](https://img.shields.io/badge/Frameworks-CUDA%20%7C%20OpenCL%20%7C%20OpenMP%20%7C%20Pthreads-orange.svg)]()
 
 A high-performance computing (HPC) sandbox dedicated to optimizing mathematical workloads across heterogeneous hardware architectures. This repository features a comparative performance analysis of deterministic **Numerical Integration Solvers**, engineered across multiple abstraction layers spanning mass-parallel GPU computing and low-level CPU concurrency.

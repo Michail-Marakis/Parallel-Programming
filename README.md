@@ -11,7 +11,7 @@ The core objective is to isolate, profile, and mitigate hardware-specific bottle
 
 ## Repository Architecture & Subsystems
 
-```text
+
 Parallel-Programming/ (Root)
 │
 ├── Workload-Distribution-using-CUDA-OpenCL/  ──► [Track 1: GPU Hardware Acceleration]

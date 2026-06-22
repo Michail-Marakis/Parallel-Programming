@@ -1,7 +1,7 @@
 # High-Performance Concurrency & Workload Optimization
 
 [![Language](https://img.shields.io/badge/Language-C%20%7C%20C%2B%2B-blue.svg)](https://isocpp.org/)
-[![Platform](https://img.shields.io/badge/Platform-Linux-green.svg)](https://www.linux.org/)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-green.svg)](https://github.com/Michail-Marakis/Parallel-Programming)
 [![Frameworks](https://img.shields.io/badge/Frameworks-CUDA%20%7C%20OpenCL%20%7C%20OpenMP%20%7C%20Pthreads-orange.svg)]()
 
 A high-performance computing (HPC) and advanced concurrency sandbox dedicated to optimizing workloads across heterogeneous hardware architectures. This repository features two core engineering tracks: deterministic **Numerical Integration Solvers** optimized across mass-parallel GPU and CPU layers, and a production-grade, asynchronous **Multi-Threaded Pipeline Simulation** modeling strict resource contention.

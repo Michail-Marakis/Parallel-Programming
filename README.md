@@ -15,8 +15,8 @@ The core objective is to isolate, profile, and mitigate hardware-specific bottle
 > **Parallel-Programming/** *(Root)*
 > 
 > * **Workload-Distribution-using-CUDA-OpenCL/** ──► *[Track 1: GPU Hardware Acceleration]*
->     * `CUDA_barrier_experiment.cpp`, `CUDA_diffrent_thread_per_block.cpp`, `CUDA_diffrent_workload_distribution.cpp`, `CUDA_memory_models.cpp`
->     * `OPENCL_barrier_experimen.cpp`, `OPENCL_diffrent_thread_per_block.cpp`, `OPENCL_diffrent_workload_distribution_CPU.cpp`, `OPENCL_memory_models.cpp`
+>     * `CUDA_barrier_experiment.cu`, `CUDA_diffrent_thread_per_block.cu`, `CUDA_diffrent_workload_distribution.cu`, `CUDA_memory_models.cu`
+>     * `OPENCL_barrier_experimen.c`, `OPENCL_diffrent_thread_per_block.c`, `OPENCL_diffrent_workload_distribution_CPU.c`, `OPENCL_memory_models.c`
 >     * `cuda-opencl-report.pdf`
 > * **Workload-Distribution-using-OpenMP/** ──► *[Track 1: OpenMP Parallelism]*
 >     * `integration_using_loop_with_reduction.cpp`, `integration_using_loop_with_no_reduction.cpp`

@@ -36,10 +36,10 @@ The core objective is to isolate, profile, and mitigate hardware-specific bottle
 These modules benchmark an identical numerical integration workload across different abstraction layers to analyze hardware exploitation efficiency and programming model trade-offs.
 
 ### Heterogeneous GPU Computing (`Workload-Distribution-using-CUDA-OpenCL`)
-* **Hardware Barrier Synchronization:** Profiling execution overhead and work-group fence efficiency during parallel reductions (`CUDA_barrier_experiment.cpp`, `OPENCL_barrier_experimen.cpp`).
-* **Occupancy Tuning:** Thread-per-block configuration profiling to determine optimal streaming multiprocessor wrapping (`CUDA_diffrent_thread_per_block.cpp`, `OPENCL_diffrent_thread_per_block.cpp`).
-* **Workload Mapping:** Comparative analysis of alternative spatial data distribution patterns over the GPU grid vs. host CPU routing (`CUDA_diffrent_workload_distribution.cpp`, `OPENCL_diffrent_workload_distribution_CPU.cpp`).
-* **Memory Subsystem Layouts:** Evaluation of explicit Shared Memory / Local Scratchpad architectures against direct Global Memory bus access to eliminate bandwidth saturation (`CUDA_memory_models.cpp`, `OPENCL_memory_models.cpp`).
+* **Hardware Barrier Synchronization:** Profiling execution overhead and work-group fence efficiency during parallel reductions (`CUDA_barrier_experiment.cu`, `OPENCL_barrier_experimen.c`).
+* **Occupancy Tuning:** Thread-per-block configuration profiling to determine optimal streaming multiprocessor wrapping (`CUDA_diffrent_thread_per_block.cu`, `OPENCL_diffrent_thread_per_block.c`).
+* **Workload Mapping:** Comparative analysis of alternative spatial data distribution patterns over the GPU grid vs. host CPU routing (`CUDA_diffrent_workload_distribution.cu`, `OPENCL_diffrent_workload_distribution_CPU.c`).
+* **Memory Subsystem Layouts:** Evaluation of explicit Shared Memory / Local Scratchpad architectures against direct Global Memory bus access to eliminate bandwidth saturation (`CUDA_memory_models.cu`, `OPENCL_memory_models.c`).
 
 ### Shared-Memory Compiler Parallelism (`Workload-Distribution-using-OpenMP`)
 * **Loop-Based Parallelization:** Testing traditional loop constructs with automated variable privatization, comparing built-in parallel reductions against raw un-synchronized loops (`integration_using_loop_with_reduction.cpp`, `integration_using_loop_with_no_reduction.cpp`).

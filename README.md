@@ -47,8 +47,8 @@ The primary objective is to study performance, scalability, synchronization, mem
 >     * `test-res.sh`
 >
 > * **16-bit-ALU-VHDL/** ──► *Introductory Digital Hardware Design*
->     * alu_system.vhd
->     * alu_components.vhd
+>     * `alu_system.vhd`
+>     * `alu_components.vhd`
 
 ---
 

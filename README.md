@@ -37,7 +37,7 @@ Experiments include:
 - Thread-per-block configuration
 - Workload distribution
 - GPU memory models (Global vs Shared/Local Memory)
-- Analytic results are included at the pdf report
+- Analytic results are included in the pdf report
 
 ---
 
@@ -49,7 +49,7 @@ Numerical integration implementations using OpenMP with different parallelizatio
 - Reduction operations
 - Task-based recursion
 - Dynamic scheduling strategies
-- Analytic results are included at the pdf report
+- Analytic results are included in the pdf report
 
 ---
 
@@ -64,7 +64,7 @@ Topics explored:
 - Lock-free execution
 - Dynamic job queues
 - Alternative work distribution strategies
-- Analytic results are included at the pdf report
+- Analytic results are included in the pdf report
 
 ---
 
